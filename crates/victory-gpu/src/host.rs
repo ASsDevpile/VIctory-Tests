@@ -1200,9 +1200,8 @@ impl HostList {
         Some((gpu + at, (data + at as usize) as *mut u8))
     }
 
-    /// The host address of the list's indirect-work budget (its charge word,
-    /// then its spent word), zeroed at each submission of the list from the
-    /// first use after a reset on.
+    /// The host address of the list's indirect-work budget, zeroed at each
+    /// submission of the list from the first use after a reset on.
     pub(crate) fn budget(&self) -> Option<u64> {
         let (buffer, data) = self
             .budget
@@ -1215,11 +1214,10 @@ impl HostList {
         if !deferred.budget_zeroed {
             deferred.budget_zeroed = true;
             let at = *data;
-            // SAFETY: the list's own mapped words, written before it runs.
-            deferred.copies.push(Step::Host(Box::new(move || unsafe {
-                (at as *mut u32).write_volatile(0);
-                (at as *mut u32).add(1).write_volatile(0);
-            })));
+            // SAFETY: the list's own mapped word, written before it runs.
+            deferred
+                .copies
+                .push(Step::Host(Box::new(move || unsafe { (at as *mut u32).write_volatile(0) })));
         }
         // SAFETY: a live buffer.
         Some(unsafe { buffer.GetGPUVirtualAddress() })

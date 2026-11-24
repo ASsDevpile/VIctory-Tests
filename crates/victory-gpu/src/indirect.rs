@@ -31,6 +31,7 @@ RWByteAddressBuffer args : register(u0);
 // records run empty.
 RWByteAddressBuffer budget : register(u1);
 static const uint BUDGET = 1u << 27;
+static const uint SPENT = 1u << 31;
 // Groups of one dispatch; more run empty.
 static const uint GROUPS = 1u << 20;
 [RootSignature(RS)]
@@ -60,18 +61,24 @@ void main(uint3 id : SV_DispatchThreadID) {
         cost = g.x * g.y * g.z * 128;
         args.Store3(at, g);
     }
-    uint before;
-    budget.InterlockedAdd(0, cost, before);
-    uint spent;
-    // The charge is 32-bit: heavy garbage records (each up to about 2^26)
-    // wrap it around the 2^27 budget, which would re-open the budget. Once
-    // a record runs empty for the budget, the list's budget stays spent.
-    budget.InterlockedOr(4, 0u, spent);
-    if (spent    != 0u || before >= BUDGET || before + cost > BUDGET) {
+    uint state;
+    budget.InterlockedOr(0, 0u, state);
+    bool accepted = false;
+    while ((state & SPENT) == 0u) {
+        bool over = state >= BUDGET;
+        if (!over) over = cost > BUDGET - state;
+        uint next = over ? state | SPENT : state + cost;
+        uint actual;
+        budget.InterlockedCompareExchange(0, state, next, actual);
+        if (actual == state) {
+            accepted = !over;
+            break;
+        }
+        state = actual;
+    }
+    if (!accepted) {
         // Draws keep their layout with no vertices; groups become zero.
         args.Store(at, 0);
-        uint ignored;
-        budget.InterlockedOr(4, 1u, ignored);
     }
 }
 "#;
@@ -222,11 +229,11 @@ mod tests {
         assert!(super::clamp().is_some());
     }
 
-    /// The budget stays closed once a list has spent it: a 32-bit wrapped
-    /// charge used to re-open the budget for 64 more heavy records.
+    /// Budget reservations and the spent transition share one atomic word.
     #[test]
-    fn budget_charge_wrapping_keeps_the_budget_closed() {
-        assert!(super::SOURCE.contains("InterlockedOr(4, 0u"));
-        assert!(super::SOURCE.contains("InterlockedOr(4, 1u"));
+    fn budget_reservations_cannot_wrap_after_spending() {
+        assert!(super::SOURCE.contains("static const uint SPENT = 1u << 31;"));
+        assert!(super::SOURCE.contains("budget.InterlockedCompareExchange(0, state, next, actual)"));
+        assert!(!super::SOURCE.contains("budget.InterlockedAdd(0, cost, before)"));
     }
 }
