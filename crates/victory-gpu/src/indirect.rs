@@ -62,9 +62,16 @@ void main(uint3 id : SV_DispatchThreadID) {
     }
     uint before;
     budget.InterlockedAdd(0, cost, before);
-    if (before >= BUDGET || before + cost > BUDGET) {
+    uint spent;
+    // The charge is 32-bit: heavy garbage records (each up to about 2^26)
+    // wrap it around the 2^27 budget, which would re-open the budget. Once
+    // a record runs empty for the budget, the list's budget stays spent.
+    budget.InterlockedOr(4, 0u, spent);
+    if (spent    != 0u || before >= BUDGET || before + cost > BUDGET) {
         // Draws keep their layout with no vertices; groups become zero.
         args.Store(at, 0);
+        uint ignored;
+        budget.InterlockedOr(4, 1u, ignored);
     }
 }
 "#;
@@ -213,5 +220,13 @@ mod tests {
             return; // no host GPU here
         }
         assert!(super::clamp().is_some());
+    }
+
+    /// The budget stays closed once a list has spent it: a 32-bit wrapped
+    /// charge used to re-open the budget for 64 more heavy records.
+    #[test]
+    fn budget_charge_wrapping_keeps_the_budget_closed() {
+        assert!(super::SOURCE.contains("InterlockedOr(4, 0u"));
+        assert!(super::SOURCE.contains("InterlockedOr(4, 1u"));
     }
 }
