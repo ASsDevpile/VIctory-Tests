@@ -123,6 +123,25 @@ impl Shadow {
         address - self.start
     }
 
+    /// The first dwords of title memory at `address` in this copy: what the
+    /// CPU side last knew (`refresh` copies at submission; `copy_back` put
+    /// past submissions' shader writes back), not what an earlier command
+    /// of the same list may still write into it before the GPU runs it.
+    /// Zeroes for addresses the copy does not cover. For diagnostics only.
+    #[cfg(feature = "diagnostics")]
+    pub(crate) fn peek(&self, address: u64) -> [u32; 3] {
+        let mut words = [0; 3];
+        if address < self.start || self.left(address) < 12 {
+            return words;
+        }
+        let at = (address - self.start) as usize;
+        for (i, word) in words.iter_mut().enumerate() {
+            // SAFETY: 4 bytes inside the persistent mapping.
+            *word = unsafe { std::ptr::read_unaligned(self.data.add(at + i * 4).cast()) };
+        }
+        words
+    }
+
     /// Brings `len` bytes at `address` up to date when `list` is submitted,
     /// and keeps the copy alive until the list is reset.
     pub(crate) fn refresh(self: &Arc<Self>, list: &HostList, address: u64, len: u64) {

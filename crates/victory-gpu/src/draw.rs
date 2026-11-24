@@ -115,6 +115,18 @@ pub(crate) fn take_dropped() -> u64 {
 }
 static DROPPED: AtomicU64 = AtomicU64::new(0);
 
+/// Whether execution `n` (0-based, of any indirect) logs its record: the
+/// first 16, after that every 256th, so a frame of thousands of them
+/// leaves tens of lines. For diagnostics only; every execution is noted
+/// for the device-removed report regardless (every sampled one is there
+/// with the same values).
+#[cfg(feature = "diagnostics")]
+fn sampled(n: u64) -> bool {
+    const OPEN: u64 = 16;
+    const EVERY: u64 = 256;
+    n < OPEN || n % EVERY == 0
+}
+
 /// Marks the last traced draw as not run on the host.
 #[cfg(feature = "diagnostics")]
 fn dropped(pipeline: usize) {
@@ -1052,9 +1064,37 @@ impl State {
             return false;
         }
         #[cfg(feature = "diagnostics")]
-        list.note_op(|| {
-            self.op_text(format!("indirect kind {kind} max {max} at {arguments:#x}"), kind == DISPATCH)
-        });
+        let text = {
+            // What the title last published in the record and the count:
+            // values at the clamp's maximums mean garbage or outliers (a
+            // title pass we dropped left its bytes); normal small values
+            // mean the work itself is heavy (executed cost, not inputs).
+            let record = args.peek(arguments);
+            let count = counter
+                .as_ref()
+                .map_or("none".into(), |(s, at)| format!("{:#x}", s.peek(*at)[0]));
+            self.op_text(
+                format!(
+                    "indirect kind {kind} max {max} at {arguments:#x} record [{:#x} {:#x} {:#x}] count {count} list {:#x}",
+                    record[0],
+                    record[1],
+                    record[2],
+                    list.list.as_raw(),
+                ),
+                kind == DISPATCH,
+            )
+        };
+        #[cfg(feature = "diagnostics")]
+        {
+            static SAMPLED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = SAMPLED.fetch_add(1, Ordering::Relaxed);
+            if sampled(n) {
+                let short: String = text.chars().take(360).collect();
+                tracing::warn!(execution = n + 1, "{short}");
+            }
+        }
+        #[cfg(feature = "diagnostics")]
+        list.note_op(move || text);
         // SAFETY: an open list with everything set; the buffers are host
         // copies the list keeps alive (refresh), the signature is cached.
         unsafe {
@@ -1253,4 +1293,19 @@ pub(crate) fn blend_factor(list: &HostList, factor: Option<&[f32; 4]>) {
 pub(crate) fn stencil_ref(list: &HostList, reference: u32) {
     // SAFETY: an open list.
     unsafe { list.list.OMSetStencilRef(reference) };
+}
+
+/// The indirect-record sampler covers the first executions and is periodic
+/// after that; everything in between is left to the device-removed notes.
+#[cfg(all(test, feature = "diagnostics"))]
+mod tests {
+    #[test]
+    fn indirect_record_sampling_is_bounded() {
+        assert!(super::sampled(0));
+        assert!(super::sampled(15));
+        assert!(!super::sampled(16));
+        assert!(super::sampled(256));
+        assert!(!super::sampled(257));
+        assert!(super::sampled(5120));
+    }
 }
