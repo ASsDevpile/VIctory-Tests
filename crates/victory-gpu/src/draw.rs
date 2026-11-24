@@ -115,6 +115,36 @@ pub(crate) fn take_dropped() -> u64 {
 }
 static DROPPED: AtomicU64 = AtomicU64::new(0);
 
+#[cfg(feature = "diagnostics")]
+fn should_sample_indirect_details(sample: u64) -> bool {
+    sample < 16 || sample % 256 == 0
+}
+
+#[cfg(feature = "diagnostics")]
+fn sample_indirect_details() -> bool {
+    static SAMPLES: AtomicU64 = AtomicU64::new(0);
+    should_sample_indirect_details(SAMPLES.fetch_add(1, Ordering::Relaxed))
+}
+
+#[cfg(feature = "diagnostics")]
+fn title_word(address: u64) -> Option<u32> {
+    let mut bytes = [0; 4];
+    crate::host::read_into(address as *const u8, &mut bytes).then(|| u32::from_ne_bytes(bytes))
+}
+
+#[cfg(feature = "diagnostics")]
+fn title_words(address: u64) -> Option<[u32; 3]> {
+    let mut bytes = [0; 12];
+    if !crate::host::read_into(address as *const u8, &mut bytes) {
+        return None;
+    }
+    Some([
+        u32::from_ne_bytes(bytes[0..4].try_into().ok()?),
+        u32::from_ne_bytes(bytes[4..8].try_into().ok()?),
+        u32::from_ne_bytes(bytes[8..12].try_into().ok()?),
+    ])
+}
+
 /// Marks the last traced draw as not run on the host.
 #[cfg(feature = "diagnostics")]
 fn dropped(pipeline: usize) {
@@ -1052,9 +1082,33 @@ impl State {
             return false;
         }
         #[cfg(feature = "diagnostics")]
-        list.note_op(|| {
-            self.op_text(format!("indirect kind {kind} max {max} at {arguments:#x}"), kind == DISPATCH)
-        });
+        if crate::host::dred_on() {
+            let sampled = sample_indirect_details();
+            let record = (sampled && stride >= 12)
+                .then(|| title_words(arguments))
+                .flatten();
+            let count_value = sampled
+                .then(|| counter.as_ref().map(|(_, address)| title_word(*address)))
+                .flatten();
+            let command_list = list.list.as_raw() as usize;
+            if sampled {
+                tracing::info!(
+                    "indirect argument sample kind={kind} max={max} address={arguments:#x} record={record:?} count={count_value:?} list={command_list:#x}; title-memory snapshot, may differ from GPU-visible data"
+                );
+            }
+            list.note_op(|| {
+                let mut text = self.op_text(
+                    format!("indirect kind {kind} max {max} at {arguments:#x}"),
+                    kind == DISPATCH,
+                );
+                if sampled {
+                    text.push_str(&format!(
+                        " title-record {record:?} count {count_value:?} list {command_list:#x}"
+                    ));
+                }
+                text
+            });
+        }
         // SAFETY: an open list with everything set; the buffers are host
         // copies the list keeps alive (refresh), the signature is cached.
         unsafe {
@@ -1253,4 +1307,20 @@ pub(crate) fn blend_factor(list: &HostList, factor: Option<&[f32; 4]>) {
 pub(crate) fn stencil_ref(list: &HostList, reference: u32) {
     // SAFETY: an open list.
     unsafe { list.list.OMSetStencilRef(reference) };
+}
+
+#[cfg(all(test, feature = "diagnostics"))]
+mod tests {
+    use super::should_sample_indirect_details;
+
+    #[test]
+    fn indirect_detail_sampling_is_bounded() {
+        let sampled: Vec<_> = (0..=512)
+            .filter(|&n| should_sample_indirect_details(n))
+            .collect();
+        assert_eq!(
+            sampled,
+            [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 256, 512]
+        );
+    }
 }
