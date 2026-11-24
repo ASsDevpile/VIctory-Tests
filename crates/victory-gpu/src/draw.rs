@@ -144,6 +144,15 @@ fn root_view(list: &HostList, address: u64, srv: bool) -> Option<u64> {
     let gpu = shadow.gpu(address);
     if srv || gpu % 256 == 0 {
         shadow.refresh(list, address, len);
+        crate::shadow::ensure_state(
+            &shadow,
+            list,
+            if srv {
+                crate::shadow::PIXEL_SHADER_RESOURCE | crate::shadow::NON_PIXEL_SHADER_RESOURCE
+            } else {
+                crate::shadow::VERTEX_AND_CONSTANT_BUFFER
+            },
+        );
         return Some(gpu);
     }
     let (gpu, to) = list.scratch(len)?;
@@ -371,6 +380,11 @@ impl State {
                 continue;
             };
             shadow.refresh(list, v.address, u64::from(v.size));
+            crate::shadow::ensure_state(
+                &shadow,
+                list,
+                crate::shadow::VERTEX_AND_CONSTANT_BUFFER,
+            );
             *view = D3D12_VERTEX_BUFFER_VIEW {
                 BufferLocation: shadow.gpu(v.address),
                 SizeInBytes: v.size,
@@ -389,6 +403,7 @@ impl State {
                 return false;
             };
             shadow.refresh(list, v.address, u64::from(v.size));
+            crate::shadow::ensure_state(&shadow, list, crate::shadow::INDEX_BUFFER);
             let view = D3D12_INDEX_BUFFER_VIEW {
                 BufferLocation: shadow.gpu(v.address),
                 SizeInBytes: v.size,
@@ -1012,7 +1027,7 @@ impl State {
             s.refresh(list, *at, 4);
         }
         // Bounded first: the clamp binds a compute pipeline of its own.
-        if !crate::indirect::bound(list, &args.buffer, args.gpu(arguments), (kind, stride, max)) {
+        if !crate::indirect::bound(list, &args, args.gpu(arguments), (kind, stride, max)) {
             why("not bounded (no clamp, or arguments not 4-byte aligned)");
             return false;
         }
@@ -1028,7 +1043,7 @@ impl State {
             _ => false,
         };
         if !ran {
-            crate::indirect::done(list, &args.buffer);
+            crate::indirect::done(list, &args);
             #[cfg(feature = "diagnostics")]
             match crate::pipeline::host_pipeline(self.pipeline as This) {
                 None => crate::pipeline::note_drop(self.pipeline as This),
@@ -1043,6 +1058,13 @@ impl State {
         // SAFETY: an open list with everything set; the buffers are host
         // copies the list keeps alive (refresh), the signature is cached.
         unsafe {
+            if let Some((shadow, _)) = &counter {
+                crate::shadow::ensure_state(
+                    shadow,
+                    list,
+                    crate::shadow::INDIRECT_ARGUMENT,
+                );
+            }
             list.list.ExecuteIndirect(
                 &signature,
                 max,
@@ -1052,7 +1074,7 @@ impl State {
                 counter.as_ref().map_or(0, |(s, at)| s.offset(*at)),
             )
         };
-        crate::indirect::done(list, &args.buffer);
+        crate::indirect::done(list, &args);
         if kind == DISPATCH {
             DISPATCHED.fetch_add(1, Ordering::Relaxed);
         } else {
@@ -1116,7 +1138,24 @@ fn readable(list: &HostList, u: &UsedResource, view: &View) {
         shadow.refresh(list, address, len);
         if u.kind == ResourceType::Uav {
             shadow.gpu_writes(list, address, len);
+            crate::shadow::ensure_state(&shadow, list, crate::shadow::UNORDERED_ACCESS);
+        } else {
+            crate::shadow::ensure_state(
+                &shadow,
+                list,
+                crate::shadow::PIXEL_SHADER_RESOURCE | crate::shadow::NON_PIXEL_SHADER_RESOURCE,
+            );
         }
+    }
+    if let View::Constant(address, size) = view
+        && let Some(shadow) = crate::shadow::find(*address, u64::from(*size))
+    {
+        shadow.refresh(list, *address, u64::from(*size));
+        crate::shadow::ensure_state(
+            &shadow,
+            list,
+            crate::shadow::VERTEX_AND_CONSTANT_BUFFER,
+        );
     }
     match (view, u.kind) {
         (View::Shader(resource, _), ResourceType::Srv) => {

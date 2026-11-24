@@ -21,7 +21,7 @@ use windows::Win32::Graphics::Direct3D::ID3DBlob;
 use windows::Win32::Graphics::Direct3D12::*;
 use windows::core::s;
 
-use crate::host::{HostList, host, transition};
+use crate::host::{HostList, host};
 
 const SOURCE: &str = r#"
 #define RS "RootConstants(num32BitConstants=4, b0), UAV(u0), UAV(u1)"
@@ -146,7 +146,7 @@ fn make() -> windows::core::Result<Clamp> {
 /// after). False if the clamp is not available.
 pub(crate) fn bound(
     list: &HostList,
-    buffer: &ID3D12Resource,
+    buffer: &std::sync::Arc<crate::shadow::Shadow>,
     gpu: u64,
     (kind, stride, records): (u32, u32, u32),
 ) -> bool {
@@ -163,35 +163,35 @@ pub(crate) fn bound(
     unsafe {
         // Earlier shader writes (the title's argument passes) first.
         l.ResourceBarrier(&[uav_barrier()]);
+        crate::shadow::ensure_state(
+            buffer,
+            list,
+            crate::shadow::UNORDERED_ACCESS,
+        );
         l.SetComputeRootSignature(&c.root);
         l.SetPipelineState(&c.pso);
         l.SetComputeRoot32BitConstants(0, 4, constants.as_ptr().cast(), 0);
         l.SetComputeRootUnorderedAccessView(1, gpu);
         l.SetComputeRootUnorderedAccessView(2, budget);
         l.Dispatch(records.div_ceil(64), 1, 1);
-        l.ResourceBarrier(&[
-            uav_barrier(),
-            transition(
-                buffer,
-                D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-                D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT,
-            ),
-        ]);
+        l.ResourceBarrier(&[uav_barrier()]);
     }
+    crate::shadow::ensure_state(
+        buffer,
+        list,
+        crate::shadow::INDIRECT_ARGUMENT,
+    );
     true
 }
 
 /// After the execution: the buffer back to unordered access, where the
 /// title's passes keep using it.
-pub(crate) fn done(list: &HostList, buffer: &ID3D12Resource) {
-    // SAFETY: an open list and a live buffer.
-    unsafe {
-        list.list.ResourceBarrier(&[transition(
-            buffer,
-            D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT,
-            D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-        )])
-    };
+pub(crate) fn done(list: &HostList, buffer: &std::sync::Arc<crate::shadow::Shadow>) {
+    crate::shadow::ensure_state(
+        buffer,
+        list,
+        crate::shadow::UNORDERED_ACCESS,
+    );
 }
 
 fn uav_barrier() -> D3D12_RESOURCE_BARRIER {
