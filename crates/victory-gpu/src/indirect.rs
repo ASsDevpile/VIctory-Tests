@@ -64,6 +64,9 @@ void main(uint3 id : SV_DispatchThreadID) {
     uint state;
     budget.InterlockedOr(0, 0u, state);
     bool accepted = false;
+    // CAS retry: FXC wants this attribute for a loop that exits on a
+    // UAV's value; the loop holds no synchronization intrinsics.
+    [allow_uav_condition]
     while ((state & SPENT) == 0u) {
         bool over = state >= BUDGET;
         if (!over) over = cost > BUDGET - state;
@@ -233,6 +236,7 @@ mod tests {
     #[test]
     fn budget_reservations_cannot_wrap_after_spending() {
         assert!(super::SOURCE.contains("static const uint SPENT = 1u << 31;"));
+        assert!(super::SOURCE.contains("[allow_uav_condition]"));
         assert!(super::SOURCE.contains("budget.InterlockedCompareExchange(0, state, next, actual)"));
         assert!(!super::SOURCE.contains("budget.InterlockedAdd(0, cost, before)"));
     }
