@@ -115,6 +115,36 @@ enum Command {
         /// The console model the title sees (device type, memory).
         #[arg(long, value_enum, default_value_t = Console::SeriesX)]
         console: Console,
+        /// The host D3D12 debug layer (`VICTORY_D3D12_DEBUG`; a build with
+        /// the diagnostics feature). A variable set in the environment
+        /// wins over the flag.
+        #[arg(long)]
+        debug_layer: bool,
+        /// Device-removed data on (DRED), for a GPU failure's commands in
+        /// flight (`VICTORY_D3D12_DRED`); implies --debug-layer.
+        #[arg(long)]
+        dred: bool,
+        /// Each list of a submission run and timed on its own;
+        /// slow lists logged (`VICTORY_GPU_TIMING`); implies --debug-layer.
+        #[arg(long)]
+        gpu_timing: bool,
+        /// Translated shader loops stop after this many iterations (`n`
+        /// per lane, in place of 2^20; `VICTORY_SHADER_LOOP_LIMIT`).
+        #[arg(long)]
+        loop_limit: Option<u32>,
+        /// Wave64 compute lowered as two wave32 halves
+        /// (`VICTORY_SHADER_SPLIT_WAVE64`).
+        #[arg(long)]
+        split_wave64: bool,
+        /// Omit draws and dispatches (indirect included) whose pipeline
+        /// contains a listed 16-digit shader hash
+        /// (`VICTORY_SKIP_PIPELINES`).
+        #[arg(long, value_delimiter = ',')]
+        skip_pipelines: Option<Vec<String>>,
+        /// Also log to a file: the one named, or with `--log` alone, a
+        /// `victory-<when>.log` in the temporary directory.
+        #[arg(long, num_args = 0..=1, default_missing_value = "")]
+        log: Option<String>,
         /// Arguments for the title, after `--` (it reads the whole command
         /// line; a title that relaunches itself passes some).
         #[arg(last = true)]
@@ -137,13 +167,44 @@ enum Console {
 }
 
 fn main() -> Result<()> {
-    victory_core::logging::init("info");
+    let cli = Cli::parse();
+    let Command::Run {
+        log,
+        debug_layer,
+        dred,
+        gpu_timing,
+        loop_limit,
+        split_wave64,
+        skip_pipelines,
+        ..
+    } = &cli.command
+    else {
+        victory_core::logging::init("info", None);
+        return dispatch(cli);
+    };
+    let switches = run::Switches {
+        debug_layer: *debug_layer || *dred || *gpu_timing,
+        dred: *dred,
+        gpu_timing: *gpu_timing,
+        loop_limit: *loop_limit,
+        split_wave64: *split_wave64,
+        skip_pipelines: skip_pipelines.as_ref().map(|p| p.join(",")),
+    };
+    switches.apply();
+    let log = run::log_path(log.as_deref(), std::time::SystemTime::now());
+    victory_core::logging::init("info", log.as_deref());
+    if let Some(log) = log {
+        println!("log            {}", log.display());
+    }
     // The audio recorder `run` starts for `VICTORY_AUDIO_CAPTURE`.
     #[cfg(all(windows, feature = "diagnostics"))]
     if victory_hle::modules::audio::capture::child() {
         return Ok(());
     }
-    let cli = Cli::parse();
+    dispatch(cli)
+}
+
+fn dispatch(cli: Cli) -> Result<()> {
     match cli.command {
         Command::Inspect {
             file,
@@ -184,6 +245,7 @@ fn main() -> Result<()> {
             execute,
             console,
             title_args: _,
+            ..
         } => run::run(&exe, unimplemented, strict, execute, console),
         Command::Config => show_config(),
     }

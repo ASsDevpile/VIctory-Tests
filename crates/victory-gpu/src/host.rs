@@ -283,6 +283,34 @@ mod tests {
     use super::*;
 
     #[test]
+    fn shared_buffer_read_states_can_coexist() {
+        assert_eq!(
+            merge_buffer_state(
+                crate::shadow::VERTEX_AND_CONSTANT_BUFFER,
+                crate::shadow::INDEX_BUFFER
+            ),
+            crate::shadow::VERTEX_AND_CONSTANT_BUFFER | crate::shadow::INDEX_BUFFER
+        );
+        assert_eq!(
+            merge_buffer_state(
+                crate::shadow::VERTEX_AND_CONSTANT_BUFFER | crate::shadow::INDEX_BUFFER,
+                crate::shadow::PIXEL_SHADER_RESOURCE | crate::shadow::NON_PIXEL_SHADER_RESOURCE
+            ),
+            crate::shadow::VERTEX_AND_CONSTANT_BUFFER
+                | crate::shadow::INDEX_BUFFER
+                | crate::shadow::PIXEL_SHADER_RESOURCE
+                | crate::shadow::NON_PIXEL_SHADER_RESOURCE
+        );
+        assert_eq!(
+            merge_buffer_state(
+                crate::shadow::UNORDERED_ACCESS,
+                crate::shadow::VERTEX_AND_CONSTANT_BUFFER
+            ),
+            crate::shadow::VERTEX_AND_CONSTANT_BUFFER
+        );
+    }
+
+    #[test]
     fn warp_adapter_accepts_only_software() {
         // This probes DXGI without creating a D3D12 device or running a title.
         // SAFETY: plain DXGI adapter queries.
@@ -324,6 +352,9 @@ pub(crate) struct HostList {
     /// list names alive until it is reset, even if the title releases the
     /// resource first.
     states: Mutex<States>,
+    /// Host copies of title buffers use these states across lists just like
+    /// textures; the buffer shadow owns the state shared by all lists.
+    buffer_states: Mutex<BufferStates>,
     /// Depth textures with a writable twin the list uses (`crate::twin`),
     /// by host copy: the side its first use needs and the side it leaves
     /// newer.
@@ -364,6 +395,18 @@ type States = std::collections::HashMap<
     usize,
     (u32, u32, std::sync::Arc<crate::resource::HostTexture>),
 >;
+type BufferStates =
+    std::collections::HashMap<usize, (u32, u32, std::sync::Arc<crate::shadow::Shadow>)>;
+
+const BUFFER_READ_STATES: u32 = 0x1 | 0x2 | 0x40 | 0x80 | 0x200;
+
+fn merge_buffer_state(before: u32, wanted: u32) -> u32 {
+    if before & !BUFFER_READ_STATES == 0 && wanted & !BUFFER_READ_STATES == 0 {
+        before | wanted
+    } else {
+        wanted
+    }
+}
 
 /// Whether device-removed data is on (`VICTORY_D3D12_DRED`, diagnostics
 /// builds).
@@ -566,6 +609,7 @@ impl Host {
                 deferred: Mutex::default(),
                 scratch: Mutex::default(),
                 states: Mutex::default(),
+                buffer_states: Mutex::default(),
                 twins: Mutex::default(),
                 rebind: false.into(),
                 prelude: (prelude_allocator, prelude),
@@ -1095,6 +1139,10 @@ impl HostList {
     pub(crate) fn reset(&self) {
         *self.deferred() = Deferred::default();
         self.states.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        self.buffer_states
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
         self.twins.lock().unwrap_or_else(|e| e.into_inner()).clear();
         self.pipelines.lock().unwrap_or_else(|e| e.into_inner()).clear();
         #[cfg(feature = "diagnostics")]
@@ -1157,6 +1205,33 @@ impl HostList {
         }
     }
 
+    /// Moves a shared host buffer to `wanted` in this list, returning its
+    /// prior list state when a transition must be recorded.
+    pub(crate) fn transition_buffer(
+        &self,
+        shadow: std::sync::Arc<crate::shadow::Shadow>,
+        wanted: u32,
+    ) -> Option<(u32, u32)> {
+        let key = std::sync::Arc::as_ptr(&shadow) as usize;
+        let mut states = self
+            .buffer_states
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        match states.entry(key) {
+            std::collections::hash_map::Entry::Vacant(v) => {
+                v.insert((wanted, wanted, shadow));
+                None
+            }
+            std::collections::hash_map::Entry::Occupied(mut o) => {
+                let last = &mut o.get_mut().1;
+                let before = *last;
+                let next = merge_buffer_state(before, wanted);
+                *last = next;
+                (before != next).then_some((before, next))
+            }
+        }
+    }
+
     /// [`HostList::transition`] for a host texture of ours (a twin's
     /// plane), without twins: the barrier to record, if one is needed.
     pub(crate) fn move_texture(
@@ -1205,7 +1280,7 @@ impl HostList {
     }
 
     /// At submission: the list that moves each texture this list uses from
-    /// its real state to the one the list starts with; the textures' real
+    /// its real state to the one the list starts with; the resources' real
     /// states become those the list ends with.
     fn prelude(&self) -> Option<ID3D12CommandList> {
         // Depth textures and their twins first, from their real states and
@@ -1214,7 +1289,7 @@ impl HostList {
         let copies = crate::twin::at_submission(twins.values());
         drop(twins);
         let states = self.states.lock().unwrap_or_else(|e| e.into_inner());
-        let barriers: Vec<D3D12_RESOURCE_BARRIER> = states
+        let mut barriers: Vec<D3D12_RESOURCE_BARRIER> = states
             .values()
             .filter_map(|(first, last, copy)| {
                 let real = copy.state.swap(*last, Ordering::Relaxed);
@@ -1227,6 +1302,23 @@ impl HostList {
                 })
             })
             .collect();
+        drop(states);
+        barriers.extend(
+            self.buffer_states
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .values()
+                .filter_map(|(first, last, shadow)| {
+                    let real = shadow.state.swap(*last, Ordering::Relaxed);
+                    (real != *first).then(|| {
+                        transition(
+                            &shadow.buffer,
+                            D3D12_RESOURCE_STATES(real as i32),
+                            D3D12_RESOURCE_STATES(*first as i32),
+                        )
+                    })
+                }),
+        );
         if barriers.is_empty() && copies.is_empty() {
             return None;
         }

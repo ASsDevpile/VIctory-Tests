@@ -17,6 +17,7 @@
 //! (`crate::bindless`).
 
 use std::collections::BTreeMap;
+use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Mutex};
 
 use windows::Win32::Graphics::Direct3D12::ID3D12Resource;
@@ -32,6 +33,10 @@ pub(crate) struct Shadow {
     /// Where the title buffer starts and how long it is.
     start: u64,
     len: u64,
+    /// The shared host buffer's D3D12 state between submissions, from
+    /// [`ensure_state`]: one buffer plays several roles (vertex, index,
+    /// shader resource, indirect arguments) and D3D12 wants one state.
+    pub(crate) state: AtomicU32,
     /// The pages changed since the copy took them (none: the memory is not
     /// the runtime's, copied whole each time).
     tracked: Option<crate::watch::Tracked>,
@@ -42,6 +47,28 @@ pub(crate) struct Shadow {
     /// what the GPU wrote differs. Disjoint segments (offset, bytes) in
     /// order, and the 64 KiB pieces (by title address) already compared.
     before: Mutex<Snapshot>,
+}
+
+pub(crate) const VERTEX_AND_CONSTANT_BUFFER: u32 = 0x1;
+pub(crate) const INDEX_BUFFER: u32 = 0x2;
+pub(crate) const NON_PIXEL_SHADER_RESOURCE: u32 = 0x40;
+pub(crate) const PIXEL_SHADER_RESOURCE: u32 = 0x80;
+pub(crate) const UNORDERED_ACCESS: u32 = 0x8;
+pub(crate) const INDIRECT_ARGUMENT: u32 = 0x200;
+
+/// Moves a host buffer to a state in this list, deferring its initial
+/// transition until submission so independently recorded lists stay ordered.
+pub(crate) fn ensure_state(shadow: &Arc<Shadow>, list: &HostList, wanted: u32) {
+    use windows::Win32::Graphics::Direct3D12::D3D12_RESOURCE_STATES as State;
+    if let Some((before, after)) = list.transition_buffer(shadow.clone(), wanted) {
+        let barrier = crate::host::transition(
+            &shadow.buffer,
+            State(before as i32),
+            State(after as i32),
+        );
+        // SAFETY: an open list and a live shared host buffer.
+        unsafe { list.list.ResourceBarrier(&[barrier]) };
+    }
 }
 
 /// Snapshot segments (offset, bytes) and the pieces compared.
@@ -202,6 +229,7 @@ impl Shadow {
             gpu,
             start,
             len,
+            state: AtomicU32::new(0),
             tracked: crate::watch::track(start as usize, len as usize, true),
             pending: Mutex::default(),
             before: Mutex::default(),

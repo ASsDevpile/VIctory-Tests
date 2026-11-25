@@ -141,6 +141,36 @@ pub(crate) fn take_dropped() -> u64 {
 }
 static DROPPED: AtomicU64 = AtomicU64::new(0);
 
+#[cfg(feature = "diagnostics")]
+fn should_sample_indirect_details(sample: u64) -> bool {
+    sample < 16 || sample % 256 == 0
+}
+
+#[cfg(feature = "diagnostics")]
+fn sample_indirect_details() -> bool {
+    static SAMPLES: AtomicU64 = AtomicU64::new(0);
+    should_sample_indirect_details(SAMPLES.fetch_add(1, Ordering::Relaxed))
+}
+
+#[cfg(feature = "diagnostics")]
+fn title_word(address: u64) -> Option<u32> {
+    let mut bytes = [0; 4];
+    crate::host::read_into(address as *const u8, &mut bytes).then(|| u32::from_ne_bytes(bytes))
+}
+
+#[cfg(feature = "diagnostics")]
+fn title_words(address: u64) -> Option<[u32; 3]> {
+    let mut bytes = [0; 12];
+    if !crate::host::read_into(address as *const u8, &mut bytes) {
+        return None;
+    }
+    Some([
+        u32::from_ne_bytes(bytes[0..4].try_into().ok()?),
+        u32::from_ne_bytes(bytes[4..8].try_into().ok()?),
+        u32::from_ne_bytes(bytes[8..12].try_into().ok()?),
+    ])
+}
+
 /// Marks the last traced draw as not run on the host, counts it by why
 /// (the reason [`not_run`] gave, if its pipeline has a host one) and notes
 /// it in the list (diagnostics).
@@ -196,6 +226,15 @@ fn root_view(list: &HostList, address: u64, srv: bool, uav: bool) -> Option<u64>
         if uav {
             shadow.gpu_writes(list, address, len);
         }
+        crate::shadow::ensure_state(
+            &shadow,
+            list,
+            if srv {
+                crate::shadow::PIXEL_SHADER_RESOURCE | crate::shadow::NON_PIXEL_SHADER_RESOURCE
+            } else {
+                crate::shadow::VERTEX_AND_CONSTANT_BUFFER
+            },
+        );
         return Some(gpu);
     }
     let (gpu, to) = list.scratch(len)?;
@@ -455,6 +494,11 @@ impl State {
                 continue;
             };
             shadow.refresh(list, v.address, u64::from(v.size));
+            crate::shadow::ensure_state(
+                &shadow,
+                list,
+                crate::shadow::VERTEX_AND_CONSTANT_BUFFER,
+            );
             *view = D3D12_VERTEX_BUFFER_VIEW {
                 BufferLocation: shadow.gpu(v.address),
                 SizeInBytes: v.size,
@@ -474,6 +518,7 @@ impl State {
                 return false;
             };
             shadow.refresh(list, v.address, u64::from(v.size));
+            crate::shadow::ensure_state(&shadow, list, crate::shadow::INDEX_BUFFER);
             let view = D3D12_INDEX_BUFFER_VIEW {
                 BufferLocation: shadow.gpu(v.address),
                 SizeInBytes: v.size,
@@ -1543,7 +1588,7 @@ impl State {
             s.refresh(list, *at, 4);
         }
         // Bounded first: the clamp binds a compute pipeline of its own.
-        if !crate::indirect::bound(list, &args.buffer, args.gpu(arguments), (kind, stride, max)) {
+        if !crate::indirect::bound(list, &args, args.gpu(arguments), (kind, stride, max)) {
             why("not bounded (no clamp, or arguments not 4-byte aligned)");
             return false;
         }
@@ -1564,7 +1609,7 @@ impl State {
             _ => false,
         };
         if !ran {
-            crate::indirect::done(list, &args.buffer);
+            crate::indirect::done(list, &args);
             #[cfg(feature = "diagnostics")]
             match crate::pipeline::host_pipeline(self.pipeline as This) {
                 None => {
@@ -1581,12 +1626,39 @@ impl State {
             return false;
         }
         #[cfg(feature = "diagnostics")]
-        list.note_op(|| {
-            self.op_text(format!("indirect kind {kind} max {max} at {arguments:#x}"), kind == DISPATCH)
-        });
+        if crate::host::dred_on() {
+            let sampled = sample_indirect_details();
+            let record = (sampled && stride >= 12)
+                .then(|| title_words(arguments))
+                .flatten();
+            let count_value = sampled
+                .then(|| counter.as_ref().map(|(_, address)| title_word(*address)))
+                .flatten();
+            let command_list = list.list.as_raw() as usize;
+            if sampled {
+                tracing::info!(
+                    "indirect argument sample kind={kind} max={max} address={arguments:#x} record={record:?} count={count_value:?} list={command_list:#x}; title-memory snapshot, may differ from GPU-visible data"
+                );
+            }
+            list.note_op(|| {
+                let mut text = self.op_text(
+                    format!("indirect kind {kind} max {max} at {arguments:#x}"),
+                    kind == DISPATCH,
+                );
+                if sampled {
+                    text.push_str(&format!(
+                        " title-record {record:?} count {count_value:?} list {command_list:#x}"
+                    ));
+                }
+                text
+            });
+        }
         // SAFETY: an open list with everything set; the buffers are host
         // copies the list keeps alive (refresh), the signature is cached.
         unsafe {
+            if let Some((shadow, _)) = &counter {
+                crate::shadow::ensure_state(shadow, list, crate::shadow::INDIRECT_ARGUMENT);
+            }
             list.list.ExecuteIndirect(
                 &signature,
                 max,
@@ -1603,7 +1675,7 @@ impl State {
             let name = crate::pipeline::shaders_of(pipeline);
             crate::capture::read_indirect(list, (&args.buffer, args.offset(arguments)), count, (kind, stride, max), name);
         }
-        crate::indirect::done(list, &args.buffer);
+        crate::indirect::done(list, &args);
         if kind == DISPATCH {
             DISPATCHED.fetch_add(1, Ordering::Relaxed);
         } else {
@@ -1682,7 +1754,24 @@ fn readable(list: &HostList, u: &UsedResource, view: &View) {
         shadow.refresh(list, address, len);
         if u.kind == ResourceType::Uav {
             shadow.gpu_writes(list, address, len);
+            crate::shadow::ensure_state(&shadow, list, crate::shadow::UNORDERED_ACCESS);
+        } else {
+            crate::shadow::ensure_state(
+                &shadow,
+                list,
+                crate::shadow::PIXEL_SHADER_RESOURCE | crate::shadow::NON_PIXEL_SHADER_RESOURCE,
+            );
         }
+    }
+    if let View::Constant(address, size) = view
+        && let Some(shadow) = crate::shadow::find(*address, u64::from(*size))
+    {
+        shadow.refresh(list, *address, u64::from(*size));
+        crate::shadow::ensure_state(
+            &shadow,
+            list,
+            crate::shadow::VERTEX_AND_CONSTANT_BUFFER,
+        );
     }
     match (view, u.kind) {
         (View::Shader(resource, _), ResourceType::Srv) => {
@@ -1812,6 +1901,22 @@ pub(crate) fn blend_factor(list: &HostList, factor: Option<&[f32; 4]>) {
 pub(crate) fn stencil_ref(list: &HostList, reference: u32) {
     // SAFETY: an open list.
     unsafe { list.list.OMSetStencilRef(reference) };
+}
+
+#[cfg(all(test, feature = "diagnostics"))]
+mod tests {
+    use super::should_sample_indirect_details;
+
+    #[test]
+    fn indirect_detail_sampling_is_bounded() {
+        let sampled: Vec<_> = (0..=512)
+            .filter(|&n| should_sample_indirect_details(n))
+            .collect();
+        assert_eq!(
+            sampled,
+            [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 256, 512]
+        );
+    }
 }
 
 #[cfg(test)]

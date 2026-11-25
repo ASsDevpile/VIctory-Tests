@@ -1,8 +1,93 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
 use crate::{Console, Unimplemented};
+
+/// `run`'s diagnostics switches: the environment variables `README`'s
+/// debugging table lists, from the command line instead, so a launcher (or
+/// anything else that starts a run) does not set any by hand.
+pub(crate) struct Switches {
+    pub debug_layer: bool,
+    pub dred: bool,
+    pub gpu_timing: bool,
+    pub loop_limit: Option<u32>,
+    pub split_wave64: bool,
+    pub skip_pipelines: Option<String>,
+}
+
+impl Switches {
+    /// The unset set (tests, and `--log` alone).
+    pub(crate) fn none() -> Switches {
+        Switches {
+            debug_layer: false,
+            dred: false,
+            gpu_timing: false,
+            loop_limit: None,
+            split_wave64: false,
+            skip_pipelines: None,
+        }
+    }
+
+    /// Applies them to this process's environment, before anything reads
+    /// one of the variables again. The runtime's other `Debugging`
+    /// variables stay settable by hand (`VICTORY_LOG`, `VICTORY_WATCH`,
+    /// the captures), and any variable set in the environment wins over
+    /// its flag: this only fills the ones nothing set.
+    pub(crate) fn apply(&self) {
+        let set = |name: &str, on: bool, value: &str| {
+            if !on || std::env::var_os(name).is_some() {
+                return;
+            }
+            // SAFETY: no thread is up yet: `main` has just started.
+            unsafe { std::env::set_var(name, value) };
+        };
+        set("VICTORY_D3D12_DEBUG", self.debug_layer, "1");
+        set("VICTORY_D3D12_DRED", self.dred, "1");
+        set("VICTORY_GPU_TIMING", self.gpu_timing, "1");
+        if let Some(limit) = self.loop_limit {
+            set("VICTORY_SHADER_LOOP_LIMIT", true, &limit.to_string());
+        }
+        set("VICTORY_SHADER_SPLIT_WAVE64", self.split_wave64, "1");
+        set(
+            "VICTORY_SKIP_PIPELINES",
+            true,
+            self.skip_pipelines.as_deref().unwrap_or_default(),
+        );
+    }
+}
+
+/// `--log`'s file: the path given (`--log <file>`), else a timestamped
+/// `victory-<when>.log` in the temporary directory (`--log` alone, the
+/// launcher's way: one log per run, asked for once).
+pub(crate) fn log_path(value: Option<&str>, at: std::time::SystemTime) -> Option<PathBuf> {
+    match value {
+        None => None,
+        Some(path) if !path.is_empty() => Some(PathBuf::from(path)),
+        Some(_) => Some(std::env::temp_dir().join(format!("victory-{}.log", stamp(at)))),
+    }
+}
+
+/// A time as `YYYYMMDD-HHMMSS`, in UTC (the logs' names only have to sort
+/// and be told apart, and the day comes with the rest of the timestamp).
+fn stamp(at: std::time::SystemTime) -> String {
+    let d = at
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let time = format!("{:02}{:02}{:02}", d / 3600 % 24, d / 60 % 60, d % 60);
+    // Civil date from days since 1970-01-01 (Howard Hinnant's algorithm).
+    let z = d / 86_400 + 719_468;
+    let era = z / 146_097;
+    let doe = z % 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = era * 400 + yoe + u64::from(month <= 2);
+    format!("{year:04}{month:02}{day:02}-{time}")
+}
 
 #[cfg(windows)]
 pub fn run(
@@ -367,4 +452,58 @@ mod tests {
 #[cfg(not(windows))]
 pub fn run(_: &Path, _: Unimplemented, _: bool, _: bool, _: Console) -> Result<()> {
     anyhow::bail!("running titles requires Windows")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Switches, log_path, stamp};
+
+    #[test]
+    fn a_log_name_stamps_utc() {
+        let t = |s: u64| stamp(std::time::UNIX_EPOCH + std::time::Duration::from_secs(s));
+        assert_eq!(t(0), "19700101-000000");
+        assert_eq!(t(1_795_538_586), "20261124-164306");
+        // A leap day, and the day after a leap year's February.
+        assert_eq!(t(1_709_164_800), "20240229-000000");
+        assert_eq!(t(951_782_400), "20000229-000000");
+        assert_eq!(t(951_868_800), "20000301-000000");
+    }
+
+    #[test]
+    fn a_log_file_has_the_path_given_or_a_timestamped_one() {
+        let at = std::time::UNIX_EPOCH;
+        assert_eq!(log_path(None, at), None);
+        assert_eq!(
+            log_path(Some(""), at),
+            Some(std::env::temp_dir().join("victory-19700101-000000.log"))
+        );
+        assert_eq!(
+            log_path(Some("D:/logs/one.log"), at),
+            Some("D:/logs/one.log".into())
+        );
+    }
+
+    #[test]
+    fn switches_fill_a_variable_nothing_set() {
+        // SAFETY: this test reads its own switch, and the ones of the
+        // process's other tests touch nothing it set.
+        unsafe { std::env::remove_var("VICTORY_D3D12_DEBUG") };
+        Switches {
+            debug_layer: true,
+            ..Switches::none()
+        }
+        .apply();
+        assert_eq!(std::env::var("VICTORY_D3D12_DEBUG").as_deref(), Ok("1"));
+        // A variable in the environment wins over its flag: it stays what
+        // it was (the two runs above and below do not fight; the variable
+        // is one the runtime reads once, lazily).
+        unsafe { std::env::set_var("VICTORY_D3D12_DEBUG", "0") };
+        Switches {
+            debug_layer: true,
+            ..Switches::none()
+        }
+        .apply();
+        assert_eq!(std::env::var("VICTORY_D3D12_DEBUG").as_deref(), Ok("0"));
+        unsafe { std::env::remove_var("VICTORY_D3D12_DEBUG") };
+    }
 }

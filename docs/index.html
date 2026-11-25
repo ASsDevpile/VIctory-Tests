@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>XENITH VI — Xbox Series titles on Windows</title>
+<meta name="description" content="XENITH VI is a compatibility runtime that plays Xbox Series X|S titles you already own, on Windows, over Direct3D 12. You provide the game files; XENITH VI only runs them.">
+<style>
+  :root {
+    --bg: #0b0d14;
+    --bg2: #121527;
+    --panel: #171b30;
+    --line: #262c4a;
+    --text: #e7e9f5;
+    --muted: #9aa1c0;
+    --blue: #4a90e2;
+    --purple: #9013fe;
+    --pink: #e614a4;
+    --grad: linear-gradient(90deg, #4a90e2, #9013fe, #e614a4);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.65 "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  a { color: var(--blue); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 24px; }
+
+  header.site {
+    border-bottom: 1px solid var(--line);
+    background: var(--bg2);
+    position: sticky; top: 0; z-index: 5;
+  }
+  header.site .wrap { display: flex; align-items: center; gap: 18px; padding: 14px 24px; }
+  header.site img.logo { height: 44px; }
+  header.site nav { margin-left: auto; display: flex; gap: 22px; font-size: 15px; }
+  header.site nav a { color: var(--muted); }
+  header.site nav a:hover { color: var(--text); text-decoration: none; }
+
+  .hero { padding: 72px 0 56px; text-align: center; }
+  .hero img.logo { max-width: min(420px, 80vw); }
+  .hero p.tag { color: var(--muted); font-size: 19px; max-width: 640px; margin: 22px auto 0; }
+  .grad {
+    background: var(--grad);
+    -webkit-background-clip: text; background-clip: text;
+    color: transparent;
+  }
+  .hero .cta { margin-top: 34px; display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+  .btn {
+    display: inline-block; padding: 11px 22px; border-radius: 8px;
+    font-weight: 600; border: 1px solid var(--line); color: var(--text);
+  }
+  .btn.primary { background: var(--grad); border: 0; color: #fff; }
+  .btn:hover { text-decoration: none; filter: brightness(1.1); }
+
+  section { padding: 46px 0; border-top: 1px solid var(--line); }
+  h2 { font-size: 26px; margin: 0 0 18px; }
+  h2 .grad { -webkit-text-fill-color: transparent; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 20px;
+  }
+  .card h3 { margin: 0 0 8px; font-size: 17px; color: var(--text); }
+  .card p { margin: 0; color: var(--muted); font-size: 15px; }
+
+  pre, code {
+    font-family: Consolas, "Cascadia Code", monospace;
+    font-size: 14px;
+  }
+  pre {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 8px; padding: 14px 16px; overflow-x: auto;
+  }
+  code { background: var(--panel); padding: 1px 6px; border-radius: 4px; }
+
+  ol.steps { color: var(--muted); padding-left: 22px; }
+  ol.steps li { margin: 8px 0; }
+  ol.steps code { color: var(--text); }
+
+  .disclaimer {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-left: 4px solid;
+    border-image: var(--grad) 1;
+    border-radius: 10px;
+    padding: 22px 26px;
+  }
+  .disclaimer h3 { margin: 14px 0 6px; font-size: 16px; }
+  .disclaimer h3:first-of-type { margin-top: 0; }
+  .disclaimer p { color: var(--muted); font-size: 15px; margin: 0; }
+  .disclaimer strong { color: var(--text); }
+
+  footer.site {
+    border-top: 1px solid var(--line);
+    background: var(--bg2);
+    color: var(--muted);
+    font-size: 14px;
+    padding: 26px 0 34px;
+  }
+</style>
+</head>
+<body>
+
+<header class="site">
+  <div class="wrap">
+    <img class="logo" src="media/Logo.png" alt="XENITH VI">
+    <nav>
+      <a href="#about">About</a>
+      <a href="#start">Getting started</a>
+      <a href="#launcher">Launcher</a>
+      <a href="#legal">Legal</a>
+      <a href="https://github.com/ASsDevpile/VIctory-Tests">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<div class="hero wrap">
+  <img class="logo" src="media/Logo.png" alt="XENITH VI logo">
+  <p class="tag"><span class="grad"><strong>XENITH VI</strong></span> runs the Xbox Series X|S
+  games you already own on Windows, through Direct3D 12 — nothing to install from us
+  but the software itself.</p>
+  <div class="cta">
+    <a class="btn primary" href="#start">Get started</a>
+    <a class="btn" href="https://github.com/ASsDevpile/VIctory-Tests">Source on GitHub</a>
+  </div>
+</div>
+
+<section id="about">
+  <div class="wrap">
+    <h2>What XENITH VI <span class="grad">is</span></h2>
+    <div class="cards">
+      <div class="card">
+        <h3>A runtime, not a store</h3>
+        <p>XENITH VI maps and runs a game executable that you already have on disk.
+        It never downloads, ships, hosts, unlocks or decrypts anything — the files
+        in, come from you.</p>
+      </div>
+      <div class="card">
+        <h3>Native D3D12</h3>
+        <p>The title's GPU work is translated to Direct3D 12 on your own video card.
+        Shaders are translated per title; host pipelines are cached; nothing is a
+        generic emulator shim.</p>
+      </div>
+      <div class="card">
+        <h3>Built in the open</h3>
+        <p>Rust, GPL-3.0-or-later, grown from the open-source
+        <a href="https://github.com/marvisak/victory">VIctory</a> project. Every
+        commit, issue and test is public.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="start">
+  <div class="wrap">
+    <h2>Getting <span class="grad">started</span></h2>
+    <ol class="steps">
+      <li>Install <a href="https://rustup.rs/">Rust</a> and clone the repository.</li>
+      <li>Build the runtime with diagnostics:
+        <pre>cargo build --profile diag -p victory --features diagnostics</pre></li>
+      <li>Start the launcher and point it at a game you own:
+        <pre>xenith.cmd</pre>
+        or the graphical one:
+        <pre>xenith-ui.cmd</pre></li>
+      <li>Pick a mode. <em>Play</em> for a plain run; the debug and DRED modes
+      exist to report, in full detail, anything that goes wrong.</li>
+    </ol>
+    <p>The launcher keeps its choices in <code>xenith.ini</code> next to itself —
+    the game's location, your cache and saves folders, everything. The runtime
+    keeps none of it.</p>
+  </div>
+</section>
+
+<section id="launcher">
+  <div class="wrap">
+    <h2>The <span class="grad">launcher</span></h2>
+    <div class="cards">
+      <div class="card">
+        <h3>xenith.cmd</h3>
+        <p>Double-click, pick a mode, play. Settings menu edits every parameter:
+        game path, cache, saves, FidelityFX, console model, imports policy,
+        strict mode, log file, loop limit, pipelines to skip.</p>
+      </div>
+      <div class="card">
+        <h3>xenith-ui.cmd</h3>
+        <p>The same settings and modes in a window: fields and browse buttons,
+        a live log view, Run and Stop. Both launchers share the same
+        <code>xenith.ini</code>.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="legal">
+  <div class="wrap">
+    <h2>Legal <span class="grad">notice</span></h2>
+    <div class="disclaimer">
+      <h3>1. You provide the files. We provide nothing of the game.</h3>
+      <p>XENITH VI ships, hosts, stores, links, downloads or recommends
+      <strong>no game software</strong>. It contains no game code, no game art or
+      other assets, no keys or certificates, and no decryption of any protected
+      content. The repository you can read here contains only the runtime's own
+      source code.</p>
+      <h3>2. We are the middleman, not the source.</h3>
+      <p>XENITH VI is a compatibility layer. It does not create, modify or supply
+      your copy of any game; it only runs the files that you yourself already
+      possess. If you have no legally obtained copy of a game, XENITH VI cannot
+      give you one, and you may not use it to obtain one.</p>
+      <h3>3. Your responsibility, and your right.</h3>
+      <p>By using XENITH VI you confirm that you own the game you point it at and
+      that you are entitled to run your copy on the hardware of your choosing.
+      What you do with the software's output — and with the files you feed it —
+      is on you. Everything the runtime does happens with the files you gave it,
+      under your direction, on your machine.</p>
+      <h3>4. No affiliation, no trademarks of ours.</h3>
+      <p>XENITH VI is an independent, non-commercial, open-source project. It is
+      not affiliated with, endorsed by, or connected to Microsoft, Xbox, Rockstar
+      Games, Take-Two Interactive, AMD, NVIDIA, or any game publisher or platform
+      holder. All product names and trademarks are the property of their owners
+      and are referred to only for identification.</p>
+      <h3>5. License.</h3>
+      <p>The XENITH VI source code is licensed
+      <a href="https://www.gnu.org/licenses/gpl-3.0.html">GPL-3.0-or-later</a>,
+      like the VIctory project it builds on. The license covers our code only;
+      it does not, and cannot, cover anything it is pointed at.</p>
+    </div>
+  </div>
+</section>
+
+<footer class="site">
+  <div class="wrap">
+    XENITH VI — an open-source compatibility runtime. Code:
+    <a href="https://github.com/ASsDevpile/VIctory-Tests">ASsDevpile/VIctory-Tests</a>,
+    GPL-3.0-or-later. Bring your own files.
+  </div>
+</footer>
+
+</body>
+</html>

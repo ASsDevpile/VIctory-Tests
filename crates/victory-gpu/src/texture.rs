@@ -43,6 +43,7 @@ pub(crate) struct Staging {
     data: *mut u8,
     footprints: Vec<D3D12_PLACED_SUBRESOURCE_FOOTPRINT>,
     rows: Vec<u32>,
+    format: u32,
     layout: victory_formats::texture::Layout,
     /// Mips per array slice.
     mips: u32,
@@ -367,6 +368,20 @@ impl Staging {
                 tracing::warn!(?e, mip, slice, "texture not detiled");
                 return;
             }
+            if matches!(self.format, 86 | 115)
+                && crate::resource::expand_packed_color_in_place(
+                    self.format,
+                    linear,
+                    pitch,
+                    f.Width,
+                    f.Height,
+                    f.Depth,
+                )
+                .is_none()
+            {
+                tracing::warn!(mip, slice, "packed texture not expanded for host upload");
+                return;
+            }
         }
     }
 }
@@ -451,6 +466,7 @@ fn staging(resource: This, texture: &ID3D12Resource) -> Option<Arc<Staging>> {
         data,
         footprints,
         rows,
+        format: crate::resource::title_format(resource)?,
         layout,
         mips: u32::from(d.MipLevels),
         memory,
