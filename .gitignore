@@ -76,3 +76,6 @@
 *.swp
 Thumbs.db
 .DS_Store
+
+# The launcher keeps its choices here (the title path; yours, not the repo's)
+/xenith.ini
