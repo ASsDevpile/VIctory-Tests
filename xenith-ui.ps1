@@ -40,7 +40,7 @@ function Save-Ini {
 $Xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="XENITH VI" Height="660" Width="920"
+        Title="XENITH VI" Height="720" Width="980"
         WindowStartupLocation="CenterScreen" Background="#0B0D14"
         Foreground="#E7E9F5" FontFamily="Segoe UI" FontSize="13">
   <Grid Margin="14">
@@ -77,43 +77,60 @@ $Xaml = @'
           <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
         </Grid.RowDefinitions>
         <TextBlock Grid.Row="0" Grid.Column="0" Text="Game path" VerticalAlignment="Center"/>
-        <TextBox Grid.Row="0" Grid.Column="1" x:Name="TxtGame" Margin="0,3"/>
+        <TextBox Grid.Row="0" Grid.Column="1" x:Name="TxtGame" Margin="0,3"
+                 ToolTip="The title's game_*.exe, from a folder you own (no quotes needed)"/>
         <Button Grid.Row="0" Grid.Column="2" x:Name="BtnGame" Content="Browse..." Margin="6,3,0,3"/>
         <TextBlock Grid.Row="1" Grid.Column="0" Text="Cache location" VerticalAlignment="Center"/>
-        <TextBox Grid.Row="1" Grid.Column="1" x:Name="TxtCache" Margin="0,3"/>
+        <TextBox Grid.Row="1" Grid.Column="1" x:Name="TxtCache" Margin="0,3"
+                 ToolTip="VICTORY_CACHE_DIR: shader and image caches. Empty: %LOCALAPPDATA%\victory\cache"/>
         <Button Grid.Row="1" Grid.Column="2" x:Name="BtnCache" Content="Browse..." Margin="6,3,0,3"/>
         <TextBlock Grid.Row="2" Grid.Column="0" Text="Saves location" VerticalAlignment="Center"/>
-        <TextBox Grid.Row="2" Grid.Column="1" x:Name="TxtData" Margin="0,3"/>
+        <TextBox Grid.Row="2" Grid.Column="1" x:Name="TxtData" Margin="0,3"
+                 ToolTip="VICTORY_DATA_DIR: the title's persistent storage (saves, temp). Empty: %LOCALAPPDATA%\victory\data"/>
         <Button Grid.Row="2" Grid.Column="2" x:Name="BtnData" Content="Browse..." Margin="6,3,0,3"/>
         <TextBlock Grid.Row="3" Grid.Column="0" Text="FidelityFX" VerticalAlignment="Center"/>
-        <TextBox Grid.Row="3" Grid.Column="1" x:Name="TxtFx" Margin="0,3"/>
+        <TextBox Grid.Row="3" Grid.Column="1" x:Name="TxtFx" Margin="0,3"
+                 ToolTip="VICTORY_FIDELITYFX_DIR: your folder with AMD's FidelityFX PC upscaler DLL; empty: the title's own"/>
         <Button Grid.Row="3" Grid.Column="2" x:Name="BtnFx" Content="Browse..." Margin="6,3,0,3"/>
-        <TextBlock Grid.Row="4" Grid.Column="0" Text="Console model" VerticalAlignment="Center"/>
+        <TextBlock Grid.Row="4" Grid.Column="0" Text="Console model" VerticalAlignment="Center"
+                   ToolTip="The console the title is told it runs on (device type and memory)"/>
         <ComboBox Grid.Row="4" Grid.Column="1" x:Name="CmbConsole" Margin="0,3" Width="160" HorizontalAlignment="Left">
           <ComboBoxItem Content="series-x"/><ComboBoxItem Content="series-s"/>
         </ComboBox>
-        <TextBlock Grid.Row="5" Grid.Column="0" Text="Unimplemented" VerticalAlignment="Center"/>
+        <TextBlock Grid.Row="5" Grid.Column="0" Text="Unimplemented" VerticalAlignment="Center"
+                   ToolTip="What imports nothing provides does when called: trap (crash with a report) or zero (return 0)"/>
         <ComboBox Grid.Row="5" Grid.Column="1" x:Name="CmbUnimpl" Margin="0,3" Width="160" HorizontalAlignment="Left">
           <ComboBoxItem Content="trap"/><ComboBoxItem Content="zero"/>
         </ComboBox>
         <CheckBox Grid.Row="6" Grid.Column="0" x:Name="ChkStrict" Content="Strict" Margin="0,3"
                   VerticalAlignment="Center" Foreground="#E7E9F5"/>
         <TextBlock Grid.Row="7" Grid.Column="0" Text="Log file" VerticalAlignment="Center"/>
-        <TextBox Grid.Row="7" Grid.Column="1" x:Name="TxtLog" Margin="0,3"/>
+        <TextBox Grid.Row="7" Grid.Column="1" x:Name="TxtLog" Margin="0,3"
+                 ToolTip="--log: the file the run is logged to as well as the console. Empty: a timestamped one in %TEMP%"/>
       </Grid>
     </GroupBox>
     <GroupBox Grid.Row="2" Header="Mode" Foreground="#9AA1C0" Margin="0,0,0,10">
-      <StackPanel Orientation="Horizontal" Margin="8">
-        <RadioButton x:Name="RbPlay" Content="Play" Foreground="#E7E9F5" Margin="0,0,18,0"/>
-        <RadioButton x:Name="RbValidate" Content="Debug layer" Foreground="#E7E9F5" Margin="0,0,18,0"/>
-        <RadioButton x:Name="RbCrash" Content="Debug layer + DRED + GPU timing" Foreground="#E7E9F5"
-                     IsChecked="True" Margin="0,0,18,0"/>
-        <RadioButton x:Name="RbCapped" Content="Loops capped" Foreground="#E7E9F5" Margin="0,0,18,0"/>
-        <RadioButton x:Name="RbSkip" Content="Skip pipelines" Foreground="#E7E9F5"/>
-        <TextBlock Text="  Loop limit:" Foreground="#9AA1C0" Margin="14,0,6,0" VerticalAlignment="Center"/>
-        <TextBox x:Name="TxtLoop" Width="70" VerticalAlignment="Center"/>
-        <TextBlock Text="  Skip (hashes):" Foreground="#9AA1C0" Margin="10,0,6,0" VerticalAlignment="Center"/>
-        <TextBox x:Name="TxtSkip" Width="230" VerticalAlignment="Center"/>
+      <StackPanel Margin="8">
+        <StackPanel Orientation="Horizontal">
+          <RadioButton x:Name="RbPlay" Content="Play" Foreground="#E7E9F5" Margin="0,0,18,0"
+                       ToolTip="A plain run, no diagnostics, the release exe when it exists"/>
+          <RadioButton x:Name="RbValidate" Content="Debug layer" Foreground="#E7E9F5" Margin="0,0,18,0"
+                       ToolTip="The host D3D12 debug layer validates every call"/>
+          <RadioButton x:Name="RbCrash" Content="Debug layer + DRED + GPU timing" Foreground="#E7E9F5"
+                       IsChecked="True" Margin="0,0,18,0"
+                       ToolTip="The durable-evidence run: validation, DRED breadcrumbs, per-list GPU timing"/>
+          <RadioButton x:Name="RbCapped" Content="Loops capped" Foreground="#E7E9F5" Margin="0,0,18,0"
+                       ToolTip="The crash hunt, plus translated shader loops stopped at --loop-limit (default 4096)"/>
+          <RadioButton x:Name="RbSkip" Content="Skip pipelines" Foreground="#E7E9F5"
+                       ToolTip="The crash hunt, omitting the draws and dispatches of the listed pipelines"/>
+          <TextBlock Text="  Loop limit:" Foreground="#9AA1C0" Margin="14,0,6,0" VerticalAlignment="Center"/>
+          <TextBox x:Name="TxtLoop" Width="70" VerticalAlignment="Center"
+                   ToolTip="VICTORY_SHADER_LOOP_LIMIT: loops stop after this many iterations (empty: the default 2^20)"/>
+          <TextBlock Text="  Skip (hashes):" Foreground="#9AA1C0" Margin="10,0,6,0" VerticalAlignment="Center"/>
+          <TextBox x:Name="TxtSkip" Width="230" VerticalAlignment="Center"
+                   ToolTip="16-digit shader hashes, comma-separated; their draws and dispatches are omitted"/>
+        </StackPanel>
+        <TextBlock x:Name="ModeHint" Foreground="#7A80A3" Margin="0,6,0,0" FontSize="11.5"/>
       </StackPanel>
     </GroupBox>
     <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,0,0,8">
@@ -121,14 +138,20 @@ $Xaml = @'
               Background="#9013FE" Foreground="White" BorderBrush="#9013FE"/>
       <Button x:Name="BtnStop" Content="Stop" Width="90" Height="34" Margin="10,0,0,0" IsEnabled="False"/>
       <Button x:Name="BtnSave" Content="Save settings" Width="110" Height="34" Margin="10,0,0,0"/>
+      <Button x:Name="BtnLog" Content="Open log" Width="90" Height="34" Margin="10,0,0,0"
+              ToolTip="Open the run's log (the named one, else the folder of the timestamped ones)"/>
     </StackPanel>
     <TextBox Grid.Row="3" x:Name="LogBox" Margin="0,50,0,0" IsReadOnly="True"
              Background="#121527" BorderBrush="#262C4A" Foreground="#E7E9F5"
              FontFamily="Consolas" VerticalScrollBarVisibility="Auto"
              TextWrapping="NoWrap" AcceptsReturn="True"/>
-    <TextBlock Grid.Row="4" Margin="0,8,0,0" TextWrapping="Wrap" FontSize="11.5"
-               Foreground="#7A80A3"
-               Text="Bring your own files: XENITH VI runs a game you already own and supplies nothing of it - no game code, assets or keys. It is a compatibility layer, not affiliated with or endorsed by Microsoft, Rockstar Games or any publisher. Code: GPL-3.0-or-later."/>
+    <StackPanel Grid.Row="4">
+      <TextBlock x:Name="Status" TextWrapping="Wrap" FontSize="11.5" Foreground="#4A90E2"
+                 Text="Ready."/>
+      <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" FontSize="11.5"
+                 Foreground="#7A80A3"
+                 Text="Bring your own files: XENITH VI runs a game you already own and supplies nothing of it - no game code, assets or keys. It is a compatibility layer, not affiliated with or endorsed by Microsoft, Rockstar Games or any publisher. A mix of the VIctory runtime and XCL techniques. Code: GPL-3.0-or-later."/>
+    </StackPanel>
   </Grid>
 </Window>
 '@
@@ -175,6 +198,40 @@ function Collect-Settings {
     $S['UNIMPLEMENTED'] = @('trap', 'zero')[[Math]::Max(0, $Win.FindName('CmbUnimpl').SelectedIndex)]
     $S['STRICT'] = $(if ($Win.FindName('ChkStrict').IsChecked) { 'on' } else { 'off' })
 }
+
+function Set-Status {
+    param([string]$text)
+    $Win.FindName('Status').Text = $text
+}
+
+function Update-ModeHint {
+    $hint = 'The durable-evidence run: validation, DRED breadcrumbs and per-list GPU timing.'
+    if ($Win.FindName('RbPlay').IsChecked) {
+        $hint = 'A plain run: no diagnostics, and the release exe when it exists.'
+    } elseif ($Win.FindName('RbValidate').IsChecked) {
+        $hint = 'The host D3D12 debug layer validates every call and reports bad use.'
+    } elseif ($Win.FindName('RbCapped').IsChecked) {
+        $hint = 'The crash hunt with translated shader loops stopped at the loop limit (empty field: 4096).'
+    } elseif ($Win.FindName('RbSkip').IsChecked) {
+        $hint = 'The crash hunt that omits the draws and dispatches of the pipelines listed under Skip.'
+    }
+    $Win.FindName('ModeHint').Text = $hint
+}
+
+foreach ($rb in @('RbPlay', 'RbValidate', 'RbCrash', 'RbCapped', 'RbSkip')) {
+    $Win.FindName($rb).Add_Checked({ Update-ModeHint })
+    $Win.FindName($rb).Add_Unchecked({ Update-ModeHint })
+}
+Update-ModeHint
+
+$Win.FindName('BtnLog').Add_Click({
+    $log = $Win.FindName('TxtLog').Text.Trim()
+    if ($log -and (Test-Path -LiteralPath $log)) {
+        Start-Process notepad.exe $log
+    } else {
+        Start-Process explorer.exe ([System.IO.Path]::GetTempPath())
+    }
+})
 
 function Log-Line {
     param([string]$line)
@@ -295,6 +352,7 @@ function Start-Run {
     $Win.FindName('BtnStop').IsEnabled = $true
     Log-Line ('run  ' + $S['GAME'])
     Log-Line ('mode ' + $mode)
+    Set-Status ('running: ' + $S['GAME'])
 }
 
 function Stop-Run {
@@ -302,6 +360,7 @@ function Stop-Run {
     if ($p -and -not $p.HasExited) {
         $p.Kill()
         Log-Line 'stop requested'
+        Set-Status 'stop requested'
     }
 }
 
@@ -324,7 +383,10 @@ $Timer.Add_Tick({
     if ($script:Done) {
         $Timer.Stop()
         $p = $script:Proc
-        if ($p) { Log-Line ('exited with ' + $p.ExitCode) }
+        if ($p) {
+            Log-Line ('exited with ' + $p.ExitCode)
+            Set-Status ('exited with ' + $p.ExitCode)
+        }
         $Win.FindName('BtnRun').IsEnabled = $true
         $Win.FindName('BtnStop').IsEnabled = $false
     }
