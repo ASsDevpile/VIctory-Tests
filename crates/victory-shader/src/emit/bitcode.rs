@@ -341,6 +341,38 @@ impl Module {
             .collect()
     }
 
+    /// The calls of the external function `name` (tests: the exchanges'
+    /// barriers pair up, and the wave intrinsic a lowering took).
+    #[cfg(test)]
+    pub(crate) fn calls(&self, name: &str) -> usize {
+        self.insts
+            .iter()
+            .filter(|i| match i.op {
+                Op::Call(f, _) => self.funcs[f as usize].name == name,
+                _ => false,
+            })
+            .count()
+    }
+
+    /// The calls of every external function (tests: their names and counts;
+    /// the DXIL the lowering writes is a packed container, whose names the
+    /// tests cannot look up in text).
+    #[cfg(test)]
+    pub(crate) fn call_counts(&self) -> Vec<(&str, usize)> {
+        let mut counts = Vec::new();
+        for (f, func) in self.funcs.iter().enumerate() {
+            let n = self
+                .insts
+                .iter()
+                .filter(|i| matches!(i.op, Op::Call(g, _) if g as usize == f))
+                .count();
+            if n > 0 {
+                counts.push((func.name.as_str(), n));
+            }
+        }
+        counts
+    }
+
     /// An external global of type `ty` in address space `space` (DXIL
     /// declares thread-group shared memory this way).
     pub fn global(&mut self, name: &str, ty: Ty, space: u32) -> V {

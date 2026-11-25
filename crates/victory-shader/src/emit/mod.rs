@@ -806,6 +806,159 @@ mod tests {
         );
     }
 
+    /// Lowers a wave64 compute program's words (GFX10, `s_endpgm` last)
+    /// with (or without) the split.
+    fn halves_of(words: &[u32], split: bool) -> super::lower::Lowered {
+        let native = NativeProgram {
+            stage: HwStage::Cs,
+            wave64: true,
+            vgprs: 10,
+            layout: vec![],
+            used: vec![],
+            io: StageIo::Cs(ComputeIo {
+                rsrc2: 0,
+                threads: [64, 1, 1],
+            }),
+            code: words.iter().flat_map(|w| w.to_le_bytes()).collect(),
+        };
+        let p = ir::build(&native.patched_code(), native.wave64, native.vgprs).unwrap();
+        let st = structure::structure(&p).unwrap();
+        let res = resource::track(&p, &native.layout, native.stage, Some(&st)).unwrap();
+        let io = io::raise(&p, &native).unwrap();
+        super::lower::lower(&super::lower::Parts {
+            native: &native,
+            p: &p,
+            st: &st,
+            io: &io,
+            res: &res,
+            inputs: vec![],
+            outputs: vec![],
+            prims: vec![],
+            mesh_stride: 0,
+            split,
+        })
+        .unwrap()
+    }
+
+    /// A wave64 readfirstlane under the split: a console wave is two
+    /// hardware halves, so the activity and the value cross the exchange
+    /// slot (two barriers, the readlane's one more). Without the split, no
+    /// exchange runs at all.
+    #[test]
+    fn a_wave64_readfirstlane_exchanges_twice_when_split() {
+        let words = [
+            0x7E00_0200u32,
+            0xD760_0002,
+            0x0000_0100, // v_mov_b32 v0, s0; v_readlane_b32 s2, v0, s0
+            0x7E06_0500,
+            0xBF81_0000, // v_readfirstlane_b32 s3, v0; s_endpgm
+        ];
+        let off = halves_of(&words, false);
+        assert_eq!(off.barriers, 0, "no split: no exchange barriers");
+        let on = halves_of(&words, true);
+        assert_eq!(
+            on.barriers, 3,
+            "the readlane's one and the readfirstlane's two"
+        );
+        assert_eq!(on.shared_globals, vec!["taken", "swap"]);
+    }
+
+    /// A wave64 mbcnt of a stored mask reads the mask's dword: split, that
+    /// dword is the halves' ballot pair exchanged and ordered (the low word
+    /// half 0's, the console's lanes 0..31). The counting itself runs on
+    /// the claimed console lane either way.
+    #[test]
+    fn a_wave64_mbcnt_ballots_the_mask_across_halves_when_split() {
+        let words = [
+            0xBE82_25C1u32, // s_or_saveexec_b64 s2, u32(-1)
+            0xD765_0001,
+            0x0001_0002, // v_mbcnt_lo_u32_b32 v1, s2, 0
+            0xD766_0001,
+            0x0001_0101, // v_mbcnt_hi_u32_b32 v1, v1, 0
+            0xBF81_0000,
+        ];
+        let off = halves_of(&words, false);
+        assert_eq!(off.barriers, 0);
+        assert_eq!(off.shared_globals, Vec::<String>::new());
+        let on = halves_of(&words, true);
+        assert_eq!(on.barriers, 1, "the ballot's one exchange");
+        assert_eq!(on.shared_globals, vec!["taken", "swap"]);
+    }
+
+    /// A wave64 whole-wave section (`s_or_saveexec -1` … the restore) that
+    /// leaves an or-reduction over all 64 lanes (an identity through
+    /// `v_cndmask`, a DPP xor-tower through the rows, `v_permlanex16`, the
+    /// other half through `v_readlane`): split, the host op reduces the
+    /// half and the halves join across the exchange slot; without it, one
+    /// host op over the console's wave stands.
+    #[test]
+    fn a_wave64_section_reduction_combines_the_halves_when_split() {
+        let words = [
+            0x7E00_0209u32, // v_mov_b32 v0, s9
+            0xBE82_25C1,    // s_or_saveexec_b64 s2, u32(-1)
+            0xD501_0001,
+            0x000A_0080, // v_cndmask_b32 v1, 0, v0, s2
+            0x3804_02FA,
+            0xFF08_B101, // v_or_b32 v2, v1, v1 dpp=quad[1,0,3,2]
+            0x3806_04FA,
+            0xFF08_1B02, // v_or_b32 v3, v2, v2 dpp=quad[3,2,1,0]
+            0x3808_06FA,
+            0xFF09_4103, // v_or_b32 v4, v3, v3 dpp=l^7
+            0x380A_08FA,
+            0xFF09_4004, // v_or_b32 v5, v4, v4 dpp=l^15
+            0xD778_0006,
+            0x0201_0105, // v_permlanex16_b32 v6, v5, 0, 0 (the other row)
+            0xD51C_0007,
+            0x0002_0B06, // v_or_b32 v7, v6, v5 (a half's 32 lanes)
+            0xD760_0004,
+            0x0001_7F07, // v_readlane_b32 s4, v7, 63 (the other half's)
+            0xD51C_0008,
+            0x0000_0907, // v_or_b32 v8, v7, s4
+            0xD760_0005,
+            0x0001_0108, // v_readlane_b32 s5, v8, 0 (the value read on)
+            0xBEFE_0402, // s_mov_b64 exec, s2
+            0x7E00_0205, // v_mov_b32 v0, s5 (a use outside the section)
+            0xBF81_0000,
+        ];
+        let off = halves_of(&words, false);
+        assert_eq!(off.barriers, 0);
+        assert!(off.wave_ops, "the console wave's reduction is one host op");
+        let on = halves_of(&words, true);
+        assert_eq!(on.barriers, 1, "the reduction's one exchange");
+        assert_eq!(on.shared_globals, vec!["taken", "swap"]);
+        assert!(
+            on.calls
+                .iter()
+                .any(|(n, c)| n == "dx.op.waveActiveBit.i32" && *c > 0),
+            "the half's reduction"
+        );
+        assert!(
+            on.calls.iter().any(|(n, c)| n == "dx.op.barrier" && *c > 0),
+            "the exchange's barrier"
+        );
+    }
+
+    /// A wave64 lane write (`v_writelane_b32 v0, s9, 3`) and the reading of
+    /// the lane written back lower under the split: console lane 3 is host
+    /// lane 3 of the first half, so the write lands where its readers are
+    /// and the read exchanges to reach lane 3 of the other half too.
+    #[test]
+    fn a_wave64_writelane_and_readlane_follow_console_lanes_when_split() {
+        let words = [
+            0x7E00_0200u32, // v_mov_b32 v0, s0
+            0xD761_0000,
+            0x0001_0609, // v_writelane_b32 v0, s9, 3
+            0xD760_0002,
+            0x0000_0100, // v_readlane_b32 s2, v0, s0
+            0xBF81_0000,
+        ];
+        let off = halves_of(&words, false);
+        assert_eq!(off.barriers, 0);
+        let on = halves_of(&words, true);
+        assert_eq!(on.barriers, 1, "the readlane's one exchange");
+        assert_eq!(on.shared_globals, vec!["taken", "swap"]);
+    }
+
     /// A pixel shader writing a constant colour.
     #[cfg(windows)]
     fn constant_color() -> Vec<u8> {
@@ -969,8 +1122,7 @@ mod tests {
             let c = super::Container::parse(&bytes).unwrap();
             let p = crate::ir::build(&native.patched_code(), native.wave64, native.vgprs).unwrap();
             let st = crate::structure::structure(&p).unwrap();
-            let res =
-                crate::resource::track(&p, &native.layout, native.stage, Some(&st)).unwrap();
+            let res = crate::resource::track(&p, &native.layout, native.stage, Some(&st)).unwrap();
             let io = crate::io::raise(&p, &native).unwrap();
             let out = super::emit(&c, &native, &p, &st, &io, &res).unwrap();
             // dxil.dll, where there is one, checks PSV0 against the module.
