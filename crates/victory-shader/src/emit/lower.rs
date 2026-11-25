@@ -46,6 +46,14 @@ pub(crate) struct Lowered {
     /// The group-shared globals (counters and slots; the whole `lds`).
     #[cfg(test)]
     pub shared_globals: Vec<String>,
+    /// The `dx.op.barrier` calls (tests: the exchanges' pairing).
+    #[cfg(test)]
+    pub barriers: usize,
+    /// The calls of every external function, with their counts (tests: the
+    /// wave intrinsic a lowering took; the written DXIL is a packed
+    /// container, so its text cannot be probed for the calls' names).
+    #[cfg(test)]
+    pub calls: Vec<(String, usize)>,
 }
 
 pub(crate) struct Parts<'a> {
@@ -238,6 +246,9 @@ struct Lower<'a> {
     claimed: Option<(V, V)>,
     /// The split's half (0 or 1), from the claim's base.
     half: Option<V>,
+    /// Per-lane guards ([`Self::begin_guarded`]) in effect: an exchange
+    /// under one would barrier only the guarded lanes and hang the group.
+    guard_depth: usize,
 }
 
 /// Iterations after which a loop is left (per entry into it), unless
@@ -546,6 +557,7 @@ impl<'a> Lower<'a> {
             split,
             claimed,
             half: None,
+            guard_depth: 0,
         }
     }
 
@@ -849,7 +861,69 @@ impl<'a> Lower<'a> {
                 )
             }
         };
+        // Split: the host wave op reduced this hardware half only; the
+        // other half's crosses the exchange slot and the two combine the
+        // way the console op would across its whole wave. A prefix only
+        // sums, so the other half's total shifts this half's prefixes over.
+        let r = if self.split {
+            match prefix {
+                Some(_) => {
+                    let (code, unsigned) = (self.s.m.i8(0), self.s.m.i8(u8::from(op == Op::AddU)));
+                    let t = self.s.op(
+                        c,
+                        &format!("waveActiveOp.{sfx}"),
+                        Attr::NoUnwind,
+                        ty,
+                        119,
+                        &[arg, code, unsigned],
+                    );
+                    let total = if float { self.as_int(t) } else { t };
+                    let total = self.exchange(c, total)?;
+                    let total = if float { self.as_float(total) } else { total };
+                    let sum = self.s.m.bin(c, Bin::Add, total, r);
+                    let zero = self.s.m.i32(0);
+                    let half = self.split_half();
+                    let low = self.s.m.cmp(c, pred::EQ, half, zero);
+                    self.s.m.select(c, low, r, sum)
+                }
+                None => {
+                    let dword = if float { self.as_int(r) } else { r };
+                    let other = self.exchange(c, dword)?;
+                    self.halves(c, op, r, other, float)
+                }
+            }
+        } else {
+            r
+        };
         Ok(if float { self.as_int(r) } else { r })
+    }
+
+    /// The split: joins the two hardware halves' results of a whole-wave
+    /// reduction the way the console op would across its wave (`other` is
+    /// the exchanged dword, cast back for the float operations).
+    fn halves(&mut self, at: usize, op: super::wave::Op, mine: V, other: V, float: bool) -> V {
+        use super::wave::Op;
+        let (m, o) = if float {
+            (mine, self.as_float(other))
+        } else {
+            (mine, other)
+        };
+        let edge = |l: &mut Self, p: u8| {
+            let ok = l.s.m.cmp(at, p, m, o);
+            l.s.m.select(at, ok, m, o)
+        };
+        match op {
+            Op::AddU | Op::AddF => self.s.m.bin(at, Bin::Add, m, o),
+            Op::Or => self.s.m.bin(at, Bin::Or, m, o),
+            Op::And => self.s.m.bin(at, Bin::And, m, o),
+            Op::Xor => self.s.m.bin(at, Bin::Xor, m, o),
+            Op::MinU => edge(self, pred::IULT),
+            Op::MaxU => edge(self, pred::IUGT),
+            Op::MinI => edge(self, pred::SLT),
+            Op::MaxI => edge(self, pred::SGT),
+            Op::MinF => edge(self, pred::OLT),
+            Op::MaxF => edge(self, pred::OGT),
+        }
     }
 
     fn run(mut self) -> Result<Lowered, Stop> {
@@ -947,6 +1021,16 @@ impl<'a> Lower<'a> {
                 .shared_globals()
                 .into_iter()
                 .map(String::from)
+                .collect(),
+            #[cfg(test)]
+            barriers: self.s.m.calls("dx.op.barrier"),
+            #[cfg(test)]
+            calls: self
+                .s
+                .m
+                .call_counts()
+                .into_iter()
+                .map(|(name, n)| (name.to_string(), n))
                 .collect(),
             dxil: self.s.finish(),
             user_data,
@@ -1878,6 +1962,7 @@ impl<'a> Lower<'a> {
     /// lane guard): returns where it started and the join block.
     fn begin_guarded(&mut self, guard: Option<V>) -> Option<(usize, usize)> {
         let g = guard?;
+        self.guard_depth += 1;
         let (then, join) = (self.s.m.new_block(), self.s.m.new_block());
         self.s.m.terminate(self.cur, Term::CondBr(g, then, join));
         let head = self.cur;
@@ -1890,6 +1975,7 @@ impl<'a> Lower<'a> {
         let Some((head, join)) = at else {
             return values.iter().map(|v| v.0).collect();
         };
+        self.guard_depth -= 1;
         let then = self.cur;
         self.s.m.terminate(then, Term::Br(join));
         self.cur = join;
@@ -1945,6 +2031,14 @@ impl<'a> Lower<'a> {
     /// (one console wave per group: both halves traverse the same blocks,
     /// which pairs the exchanges) and reads the other half's word.
     fn exchange(&mut self, at: usize, word: V) -> Result<V, Why> {
+        // Both halves must reach the exchange's barrier; lanes inside a
+        // per-lane guard would wait there forever (the console wave's
+        // uncompilable shape a real wave64 pipeline refuses elsewhere too).
+        if self.guard_depth > 0 {
+            return Err(
+                "an exchange under a per-lane guard: the halves would deadlock at its barrier",
+            );
+        }
         let half = self.split_half();
         let ex = self.s.ex();
         let mine = self.s.m.element(at, ex, half);
@@ -4386,14 +4480,9 @@ impl<'a> Lower<'a> {
                         .s
                         .op(c, "waveActiveBallot", Attr::NoUnwind, four, 116, &[one]);
                     let mine_active = self.s.m.extract(c, b, 0);
-                    let mine = self.s.op(
-                        c,
-                        "waveReadLaneFirst.i32",
-                        Attr::NoUnwind,
-                        i32t,
-                        118,
-                        &[a],
-                    );
+                    let mine =
+                        self.s
+                            .op(c, "waveReadLaneFirst.i32", Attr::NoUnwind, i32t, 118, &[a]);
                     let other_active = self.exchange(c, mine_active)?;
                     let other = self.exchange(c, mine)?;
                     let half = self.split_half();
@@ -7263,9 +7352,7 @@ mod tests {
             S_ENDPGM,
         ];
 
-        let code: Vec<u8> = words.iter()
-            .flat_map(|w| w.to_le_bytes())
-            .collect();
+        let code: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
 
         let native = NativeProgram {
             stage: HwStage::Cs,
@@ -7282,9 +7369,12 @@ mod tests {
 
         let p = ir::build(&native.code, false, 256).unwrap();
 
-        assert!(p.blocks.iter()
-            .flat_map(|b| &b.insts)
-            .any(|i| i.name() == "v_perm_b32"));
+        assert!(
+            p.blocks
+                .iter()
+                .flat_map(|b| &b.insts)
+                .any(|i| i.name() == "v_perm_b32")
+        );
 
         let st = structure::structure(&p).unwrap();
         let res = resource::track(&p, &native.layout, native.stage, Some(&st)).unwrap();
@@ -7302,13 +7392,12 @@ mod tests {
             prims: vec![],
             mesh_stride: 0,
             split: false,
-        }).unwrap();
+        })
+        .unwrap();
 
-        let container =
-            crate::Container::parse(&emitted.dxil).unwrap();
+        let container = crate::Container::parse(&emitted.dxil).unwrap();
 
-        let features =
-            container.part(crate::FourCC::SFI0).unwrap();
+        let features = container.part(crate::FourCC::SFI0).unwrap();
 
         u64::from_le_bytes(features.data.try_into().unwrap())
     }
