@@ -133,10 +133,18 @@ The diagnostics switches of `run` set the variables of the debugging
 section below (`--dred` and `--gpu-timing` imply `--debug-layer`), so a
 run needs no environment set by hand; a variable present in the
 environment still wins over its flag. `xenith.cmd` in the repository
-root is a double-clickable launcher on top of them: it keeps the title's
-path in `xenith.ini` and asks for a mode (play, debug layer, DRED + GPU
-timing (the default), loops capped, pipelines skipped), then runs
-`victory run <title> --execute --log` with the mode's switches.
+root is a double-clickable launcher on top of them: it keeps its
+settings in `xenith.ini` and offers the modes (play, debug layer, DRED
++ GPU timing (the default), loops capped, pipelines skipped), then runs
+`victory run <title> --execute --log` with the mode's switches. Its
+Settings menu edits everything the run takes: the title's path, the
+cache location (`VICTORY_CACHE_DIR`), the saves location
+(`VICTORY_DATA_DIR`), the FidelityFX folder (`VICTORY_FIDELITYFX_DIR`),
+the console model (`--console`), unimplemented-import policy
+(`--unimplemented`), strict mode (`--strict`), the log file, the loop
+limit and the pipelines to skip. An empty setting means the runtime's
+default; the launcher's values are set fresh for every run, so a shell
+variable from outside cannot override them.
 
 ## Debugging
 
