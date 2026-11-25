@@ -144,7 +144,12 @@ the console model (`--console`), unimplemented-import policy
 (`--unimplemented`), strict mode (`--strict`), the log file, the loop
 limit and the pipelines to skip. An empty setting means the runtime's
 default; the launcher's values are set fresh for every run, so a shell
-variable from outside cannot override them.
+variable from outside cannot override them. `xenith-ui.cmd` is the same
+launcher in a window (WPF, Windows PowerShell, nothing to install): the
+same settings with browse buttons, the same modes, a live log view and
+Run/Stop; both launchers share `xenith.ini`. The project's website
+lives at [docs/index.html](docs/index.html) (served as-is by GitHub
+Pages from `docs/`, logo in `docs/media/`).
 
 ## Debugging
 
