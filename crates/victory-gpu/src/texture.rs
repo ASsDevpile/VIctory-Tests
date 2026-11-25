@@ -466,7 +466,7 @@ fn staging(resource: This, texture: &ID3D12Resource) -> Option<Arc<Staging>> {
         data,
         footprints,
         rows,
-        format: crate::resource::texture_format(resource)?,
+        format: crate::resource::title_format(resource)?,
         layout,
         mips: u32::from(d.MipLevels),
         memory,
