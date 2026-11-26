@@ -4,7 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>XENITH VI — Xbox Series titles on Windows</title>
-<meta name="description" content="XENITH VI is a compatibility runtime that plays Xbox Series X|S titles you already own, on Windows, over Direct3D 12. You provide the game files; XENITH VI only runs them.">
+<meta name="description" content="XENITH VI is a compatibility runtime that plays Xbox Series X|S titles you already own, on Windows, over Direct3D 12. A mix of the VIctory runtime and XCL techniques. You provide the game files; XENITH VI only runs them.">
+<link rel="icon" type="image/png" href="media/Logo.png">
 <style>
   :root {
     --bg: #0b0d14;
@@ -25,6 +26,7 @@
     color: var(--text);
     font: 16px/1.65 "Segoe UI", system-ui, -apple-system, sans-serif;
   }
+  html { scroll-behavior: smooth; }
   a { color: var(--blue); text-decoration: none; }
   a:hover { text-decoration: underline; }
   .wrap { max-width: 980px; margin: 0 auto; padding: 0 24px; }
@@ -43,6 +45,7 @@
   .hero { padding: 72px 0 56px; text-align: center; }
   .hero img.logo { max-width: min(420px, 80vw); }
   .hero p.tag { color: var(--muted); font-size: 19px; max-width: 640px; margin: 22px auto 0; }
+  .hero p.parents { color: var(--muted); font-size: 15px; margin: 10px auto 0; }
   .grad {
     background: var(--grad);
     -webkit-background-clip: text; background-clip: text;
@@ -123,6 +126,9 @@
   <p class="tag"><span class="grad"><strong>XENITH VI</strong></span> runs the Xbox Series X|S
   games you already own on Windows, through Direct3D 12 — nothing to install from us
   but the software itself.</p>
+  <p class="parents">A mix of the <a href="https://github.com/marvisak/victory">VIctory</a>
+  runtime and techniques proven in <a href="https://github.com/ivall/xcl">XCL</a>,
+  the Xbox Series X|S compatibility layer.</p>
   <div class="cta">
     <a class="btn primary" href="#start">Get started</a>
     <a class="btn" href="https://github.com/ASsDevpile/VIctory-Tests">Source on GitHub</a>
@@ -147,9 +153,11 @@
       </div>
       <div class="card">
         <h3>Built in the open</h3>
-        <p>Rust, GPL-3.0-or-later, grown from the open-source
-        <a href="https://github.com/marvisak/victory">VIctory</a> project. Every
-        commit, issue and test is public.</p>
+        <p>Rust, GPL-3.0-or-later. Two codebases in one: the open-source
+        <a href="https://github.com/marvisak/victory">VIctory</a> runtime as the
+        base, plus techniques proven in <a href="https://github.com/ivall/xcl">XCL</a>
+        (its wave64-on-wave32 shader lowering, among others). Every commit,
+        issue and test is public.</p>
       </div>
     </div>
   </div>

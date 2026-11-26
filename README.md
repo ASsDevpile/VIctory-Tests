@@ -1,12 +1,24 @@
-# VIctory
+<p align="center"><img src="docs/media/Logo.png" alt="XENITH VI" width="420"></p>
+
+# XENITH VI
+
+A mix of two open-source codebases that run Xbox Series X|S on Windows: the
+[VIctory](https://github.com/marvisak/victory) runtime (this repository's line
+of development, GPL-3.0-or-later) and techniques proven in
+[XCL](https://github.com/ivall/xcl) (GPL-2.0-only) — its wave64 compute as two
+wave32 halves, among others. The user supplies the game's files; XENITH VI
+ships nothing of the game.
 
 Runs Grand Theft Auto VI (Xbox Series X|S) natively on Windows, from files
 the user supplies.
 
-The title's x86-64 code runs unchanged inside our process; VIctory supplies
+The title's x86-64 code runs unchanged inside our process; the runtime supplies
 the platform underneath it and converts the title's data, ahead of time where
 it can (shaders and pipelines too, see Getting started) and on first use
 otherwise. See [docs/architecture.md](docs/architecture.md).
+
+A website lives at [docs/index.html](docs/index.html) (GitHub Pages serves it
+from `docs/`).
 
 ## Status (2026-11-24)
 
