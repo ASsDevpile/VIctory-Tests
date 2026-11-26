@@ -7,14 +7,30 @@
 
 use std::collections::HashMap;
 
+pub mod census;
+pub mod opt;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) struct Ty(u32);
+
+/// What the lowering made an instruction for, where it says so (counted by
+/// [`census`], nothing else reads it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Tag {
+    /// The select that keeps a register's old value in lanes a guard masks.
+    Guard,
+    /// An index clamp the translation adds (the console has none).
+    Clamp,
+    /// The iteration counter and limit test the translation adds to a loop.
+    Counter,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum TypeDef {
     Void,
     Int(u32),
     Float,
+    Double,
     /// Pointee and address space.
     Ptr(Ty, u32),
     Struct(Option<String>, Vec<Ty>),
@@ -208,9 +224,8 @@ pub(crate) struct Module {
     blocks: Vec<Block>,
     mds: Vec<MdDef>,
     named: Vec<(String, Vec<Md>)>,
-    /// Structures chosen between by a condition: `(cond, other)` by the
-    /// one taken where `cond` holds. [`Module::extract`] chooses the field.
-    pub chosen: HashMap<V, (V, V)>,
+    /// See [`Tag`]: by instruction.
+    tags: HashMap<u32, Tag>,
 }
 
 impl Module {
@@ -232,6 +247,9 @@ impl Module {
     }
     pub fn float(&mut self) -> Ty {
         self.ty(TypeDef::Float)
+    }
+    pub fn double(&mut self) -> Ty {
+        self.ty(TypeDef::Double)
     }
     pub fn ptr(&mut self, to: Ty) -> Ty {
         self.ty(TypeDef::Ptr(to, 0))
@@ -331,48 +349,6 @@ impl Module {
         V::Func(i)
     }
 
-    /// The names of the globals in group-shared memory (space 3).
-    #[cfg(test)]
-    pub(crate) fn shared_globals(&self) -> Vec<&str> {
-        self.globals
-            .iter()
-            .filter(|g| g.space == 3)
-            .map(|g| g.name.as_str())
-            .collect()
-    }
-
-    /// The calls of the external function `name` (tests: the exchanges'
-    /// barriers pair up, and the wave intrinsic a lowering took).
-    #[cfg(test)]
-    pub(crate) fn calls(&self, name: &str) -> usize {
-        self.insts
-            .iter()
-            .filter(|i| match i.op {
-                Op::Call(f, _) => self.funcs[f as usize].name == name,
-                _ => false,
-            })
-            .count()
-    }
-
-    /// The calls of every external function (tests: their names and counts;
-    /// the DXIL the lowering writes is a packed container, whose names the
-    /// tests cannot look up in text).
-    #[cfg(test)]
-    pub(crate) fn call_counts(&self) -> Vec<(&str, usize)> {
-        let mut counts = Vec::new();
-        for (f, func) in self.funcs.iter().enumerate() {
-            let n = self
-                .insts
-                .iter()
-                .filter(|i| matches!(i.op, Op::Call(g, _) if g as usize == f))
-                .count();
-            if n > 0 {
-                counts.push((func.name.as_str(), n));
-            }
-        }
-        counts
-    }
-
     /// An external global of type `ty` in address space `space` (DXIL
     /// declares thread-group shared memory this way).
     pub fn global(&mut self, name: &str, ty: Ty, space: u32) -> V {
@@ -398,6 +374,16 @@ impl Module {
             self.globals[n as usize].init = Some(i);
         }
         g
+    }
+
+    /// Notes what instruction `v` is for (see [`Tag`]); only when modules
+    /// are counted.
+    pub fn tag(&mut self, v: V, tag: Tag) {
+        if let V::Inst(i) = v
+            && census::enabled()
+        {
+            self.tags.insert(i, tag);
+        }
     }
 
     pub fn new_block(&mut self) -> usize {
@@ -451,14 +437,7 @@ impl Module {
             TypeDef::Array(_, t) => *t,
             t => panic!("extractvalue from {t:?}"),
         };
-        let x = self.push(block, ty, Op::Extract(agg, index));
-        match self.chosen.get(&agg).copied() {
-            Some((cond, other)) => {
-                let y = self.push(block, ty, Op::Extract(other, index));
-                self.select(block, cond, x, y)
-            }
-            None => x,
-        }
+        self.push(block, ty, Op::Extract(agg, index))
     }
     pub fn call(&mut self, block: usize, f: V, args: Vec<V>) -> V {
         let V::Func(i) = f else {
@@ -603,6 +582,7 @@ impl Module {
             match t {
                 TypeDef::Void => w.record(2, &[]),
                 TypeDef::Float => w.record(3, &[]),
+                TypeDef::Double => w.record(4, &[]),
                 TypeDef::Int(b) => w.record(7, &[u64::from(*b)]),
                 TypeDef::Ptr(p, space) => w.record(8, &[u64::from(p.0), u64::from(*space)]),
                 TypeDef::Array(n, e) => w.record(11, &[u64::from(*n), u64::from(e.0)]),
